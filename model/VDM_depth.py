@@ -1,0 +1,503 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import scipy.io as io
+import numpy as np
+import torchvision
+import cv2
+from utils.loss_util import *
+from utils.common import *
+from torch.nn.parameter import Parameter
+from torch.autograd import Variable
+from model import MainNet, PcdAlign
+
+from PIL import Image 
+import matplotlib.pyplot as plt
+
+
+class VDM_depth(nn.Module):
+    def __init__(self, args, pretrain=False, freeze=False):
+        super(VDM_depth, self).__init__()
+        self.args = args
+        self.use_shuffle = args.use_shuffle
+        self.backbone = args.backbone
+        self.num_res_blocks = list(map(int, args.num_res_blocks.split('+')))
+
+        # PCD align
+        self.pcdalign = PcdAlign.PcdAlign(nf=args.n_feats)
+        
+
+        # Demoireing backbone
+        if self.backbone == 'vdm_pcd_v1':
+            self.MainNet_V1 = MainNet.MainNet_depth(num_res_blocks=self.num_res_blocks, n_feats=args.n_feats,
+                                                 res_scale=args.res_scale, use_shuffle=args.use_shuffle)
+        else:
+            # Alternatively, other SOTA demoireing models can be adopted.
+            print('Replace with your own demoireing model!')
+            import pdb; pdb.set_trace()
+
+
+        # RGB image with 3 channels
+        if self.use_shuffle:
+            in_channels = 4
+        else:
+            in_channels = 3
+
+        # generate multi-level features for demoireing 
+        self.conv1 = nn.Conv2d(in_channels, args.n_feats, 3, 1, 1, bias=True)
+        self.conv2 = nn.Conv2d(args.n_feats, 2*args.n_feats, 3, 2, 1, bias=True)
+        self.conv2_1 = nn.Conv2d(2*args.n_feats, args.n_feats, 1, 1, 0, bias=True)
+        self.conv3 = nn.Conv2d(args.n_feats, 2*args.n_feats, 3, 2, 1, bias=True)
+        self.conv3_1 = nn.Conv2d(2*args.n_feats, args.n_feats, 1, 1, 0, bias=True)
+
+        # aggregate/blend multi-level aligned features
+        self.conv_blend_lv1 = nn.Conv2d(args.n_feats * (args.NUM_AUX_FRAMES + 1), args.NUM_AUX_FRAMES + 1, 3, 1, 1, bias=True)
+        self.conv_channel_lv1 = nn.Conv2d(args.n_feats, args.n_feats, 1, 1, 0, bias=True)
+        self.conv_blend_lv2 = nn.Conv2d(args.n_feats * (args.NUM_AUX_FRAMES + 1), args.NUM_AUX_FRAMES + 1, 3, 1, 1, bias=True)
+        self.conv_channel_lv2 = nn.Conv2d(args.n_feats, args.n_feats, 1, 1, 0, bias=True)
+        self.conv_blend_lv3 = nn.Conv2d(args.n_feats * (args.NUM_AUX_FRAMES + 1), args.NUM_AUX_FRAMES + 1, 3, 1, 1, bias=True)
+        self.conv_channel_lv3 = nn.Conv2d(args.n_feats, args.n_feats, 1, 1, 0, bias=True)
+        
+        # generate features for branch
+        self.branch_channel = 4
+        self.conv_b1 = nn.Conv2d(self.branch_channel, args.n_feats, 3, 1, 1, groups=self.branch_channel, bias=True)
+        self.conv_b2 = nn.Conv2d(args.n_feats, 2*args.n_feats, 3, 2, 1, groups=self.branch_channel, bias=True)
+        self.conv_b2_1 = nn.Conv2d(2*args.n_feats, args.n_feats, 1, 1, 0, groups=self.branch_channel, bias=True)
+        self.conv_b3 = nn.Conv2d(args.n_feats, 2*args.n_feats, 3, 2, 1, groups=self.branch_channel, bias=True)
+        self.conv_b3_1 = nn.Conv2d(2*args.n_feats, args.n_feats, 1, 1, 0, groups=self.branch_channel, bias=True)
+        
+        # aggregate/blend multi-level aligned features for branch
+        self.conv_blend_rc = nn.Conv2d(args.n_feats * (args.NUM_AUX_FRAMES + 1), args.NUM_AUX_FRAMES + 1, 3, 1, 1, bias=True)
+        self.conv_channel_rc = nn.Conv2d(args.n_feats, args.n_feats, 1, 1, 0, bias=True)
+
+    def down_shuffle(self, x, r):
+        b, c, h, w = x.size()
+        out_channel = c * (r ** 2)
+        out_h = h // r
+        out_w = w // r
+        x = x.view(b, c, out_h, r, out_w, r)
+        out = x.permute(0, 1, 3, 5, 2, 4).contiguous().view(b, out_channel, out_h, out_w)
+        return out
+
+    def forward(self, cur=None, ref=None, label=None, blend=1):
+
+        # generate multi-level features for PCD
+        cur_lv1 = self.conv1(cur)
+        cur_lv1_1 = F.interpolate(cur_lv1, scale_factor=0.5, mode='bilinear', align_corners=False)
+        cur_lv1_2 = F.interpolate(cur_lv1, scale_factor=0.25, mode='bilinear', align_corners=False)
+        cur_feats = [cur_lv1, cur_lv1_1, cur_lv1_2]
+        # generate multi-level features for branch's PCD
+        r_lv1 = self.conv_b1(cur)# RGGB channel depth
+        r_lv1_1 = F.interpolate(r_lv1, scale_factor=0.5, mode='bilinear', align_corners=False)
+        r_lv1_2 = F.interpolate(r_lv1, scale_factor=0.25, mode='bilinear', align_corners=False)
+        r_feats = [r_lv1, r_lv1_1, r_lv1_2]
+        
+        # generate multi-level features for demoireing
+        cur_lv2 = self.conv2_1(self.conv2(cur_lv1))
+        cur_lv3 = self.conv3_1(self.conv3(cur_lv2))
+        # generate multi-level features for branch
+        r_lv2 = self.conv_b2_1(self.conv_b2(r_lv1))
+        r_lv3 = self.conv_b3_1(self.conv_b3(r_lv2))
+
+        # aligned features
+        align_feats_lv1 = cur_lv1
+        align_feats_lv2 = cur_lv2
+        align_feats_lv3 = cur_lv3
+        align_feats_rc = r_lv3
+
+        # align reference/nearby frames to current frame
+        for i in range(self.args.NUM_AUX_FRAMES):
+            # extract features from reference images
+            ref_tmp = ref[:, (0 + 4 * i):(4 + 4 * i), :, :]
+            ref_lv1 = self.conv1(ref_tmp)
+            ref_lv1_1 = F.interpolate(ref_lv1, scale_factor=0.5, mode='bilinear', align_corners=False)
+            ref_lv1_2 = F.interpolate(ref_lv1, scale_factor=0.25, mode='bilinear', align_corners=False)
+            ref_feats = [ref_lv1, ref_lv1_1, ref_lv1_2]
+            # generate multi-level features for branch's PCD
+            rr_lv1 = self.conv_b1(ref_tmp)# RGGB channel depth
+            rr_lv1_1 = F.interpolate(rr_lv1, scale_factor=0.5, mode='bilinear', align_corners=False)
+            rr_lv1_2 = F.interpolate(rr_lv1, scale_factor=0.25, mode='bilinear', align_corners=False)
+            rr_feats = [rr_lv1, rr_lv1_1, rr_lv1_2]
+
+            # align features using pcd
+            T_lv1 = self.pcdalign(nbr_fea_l=ref_feats, ref_fea_l=cur_feats)
+            # align features using pcd for branch
+            rc_lv1 = self.pcdalign(nbr_fea_l=rr_feats, ref_fea_l=r_feats)
+            
+
+            # generate multi-level features for demoireing
+            T_lv2 = self.conv2_1(self.conv2(T_lv1))
+            T_lv3 = self.conv3_1(self.conv3(T_lv2))
+            # generate multi-level features for branch
+            rc_lv2 = self.conv_b2_1(self.conv_b2(rc_lv1))
+            rc_lv3 = self.conv_b3_1(self.conv_b3(rc_lv2))
+
+            # concatenate features
+            align_feats_lv1 = torch.cat((align_feats_lv1, T_lv1), dim=1)
+            align_feats_lv2 = torch.cat((align_feats_lv2, T_lv2), dim=1)
+            align_feats_lv3 = torch.cat((align_feats_lv3, T_lv3), dim=1)
+            align_feats_rc = torch.cat((align_feats_rc, rc_lv3), dim=1)
+
+        # merge features
+        if blend == 1:  # use predicted blending weights
+            weight_lv1 = F.softmax(self.conv_blend_lv1(align_feats_lv1), dim=1)
+            weight_lv2 = F.softmax(self.conv_blend_lv2(align_feats_lv2), dim=1)
+            weight_lv3 = F.softmax(self.conv_blend_lv3(align_feats_lv3), dim=1)
+            weight_rc = F.softmax(self.conv_blend_rc(align_feats_rc), dim=1)
+
+            # # save blending weights
+            # torchvision.utils.save_image(weight_lv3[:,0:1,:,:].detach().cpu(), 'weight_lv3_0.png')
+            # torchvision.utils.save_image(weight_lv2[:,0:1,:,:].detach().cpu(), 'weight_lv2_0.png')
+            # torchvision.utils.save_image(weight_lv1[:,0:1,:,:].detach().cpu(), 'weight_lv1_0.png')
+
+            merge_feats_lv1 = align_feats_lv1[:, 0:self.args.n_feats, :, :] * weight_lv1[:, 0:1, :, :]
+            merge_feats_lv2 = align_feats_lv2[:, 0:self.args.n_feats, :, :] * weight_lv2[:, 0:1, :, :]
+            merge_feats_lv3 = align_feats_lv3[:, 0:self.args.n_feats, :, :] * weight_lv3[:, 0:1, :, :]
+            merge_feats_rc = align_feats_rc[:, 0:self.args.n_feats, :, :] * weight_rc[:, 0:1, :, :]
+
+            for j in range(1, 1 + self.args.NUM_AUX_FRAMES):
+                merge_feats_lv1 = merge_feats_lv1 + align_feats_lv1[:, (self.args.n_feats * j):(self.args.n_feats + self.args.n_feats * j), :, :] * weight_lv1[:, j:(j + 1), :, :]
+                merge_feats_lv2 = merge_feats_lv2 + align_feats_lv2[:, (self.args.n_feats * j):(self.args.n_feats + self.args.n_feats * j), :, :] * weight_lv2[:, j:(j + 1), :, :]
+                merge_feats_lv3 = merge_feats_lv3 + align_feats_lv3[:, (self.args.n_feats * j):(self.args.n_feats + self.args.n_feats * j), :, :] * weight_lv3[:, j:(j + 1), :, :]
+                merge_feats_rc = merge_feats_rc + align_feats_rc[:, (self.args.n_feats * j):(self.args.n_feats + self.args.n_feats * j), :, :] * weight_rc[:, j:(j + 1), :, :]
+                
+            #     # save blending weights, auxiliary frames
+            #     torchvision.utils.save_image(weight_lv3[:,j:(j+1),:,:].detach().cpu(), 'weight_lv3_%s.png' % j)
+            #     torchvision.utils.save_image(weight_lv2[:,j:(j+1),:,:].detach().cpu(), 'weight_lv2_%s.png' % j)
+            #     torchvision.utils.save_image(weight_lv1[:,j:(j+1),:,:].detach().cpu(), 'weight_lv1_%s.png' % j)
+            # import pdb; pdb.set_trace()
+
+        elif blend == 2:
+            # average the aligned features
+            merge_feats_lv1 = align_feats_lv1[:, 0:self.args.n_feats, :, :] * 1 / (1 + self.args.NUM_AUX_FRAMES)
+            merge_feats_lv2 = align_feats_lv2[:, 0:self.args.n_feats, :, :] * 1 / (1 + self.args.NUM_AUX_FRAMES)
+            merge_feats_lv3 = align_feats_lv3[:, 0:self.args.n_feats, :, :] * 1 / (1 + self.args.NUM_AUX_FRAMES)
+
+            for j in range(1, 1 + self.args.NUM_AUX_FRAMES):
+                merge_feats_lv1 = merge_feats_lv1 + align_feats_lv1[:, (self.args.n_feats * j):(self.args.n_feats + self.args.n_feats * j), :, :] * 1 / (1 + self.args.NUM_AUX_FRAMES)
+                merge_feats_lv2 = merge_feats_lv2 + align_feats_lv2[:, (self.args.n_feats * j):(self.args.n_feats + self.args.n_feats * j), :, :] * 1 / (1 + self.args.NUM_AUX_FRAMES)
+                merge_feats_lv3 = merge_feats_lv3 + align_feats_lv3[:, (self.args.n_feats * j):(self.args.n_feats + self.args.n_feats * j), :, :] * 1 / (1 + self.args.NUM_AUX_FRAMES)
+
+        else:
+            print('Provide your own blending method')
+            import pdb; pdb.set_trace()
+
+        # refine the merged features
+        merge_feats_lv1 = self.conv_channel_lv1(merge_feats_lv1)
+        merge_feats_lv2 = self.conv_channel_lv2(merge_feats_lv2)
+        merge_feats_lv3 = self.conv_channel_lv3(merge_feats_lv3)
+        merge_feats_rc = self.conv_channel_rc(merge_feats_rc)
+
+        # demoireing
+        dm_lv3, dm_lv2, dm_lv1, f_lv1, f_lv2, f_lv3, save_dict = self.MainNet_V1(merge_feats_lv3, merge_feats_lv2, merge_feats_lv1, merge_feats_rc)
+
+        return dm_lv3, dm_lv2, dm_lv1, f_lv1, f_lv2, f_lv3, save_dict
+
+
+def warp(x, flo):
+    """
+    From PWCNet, warp an image/tensor (im2) back to im1, according to the optical flow
+    Args:
+        x: [B, C, H, W] (im2)
+        flo: [B, 2, H, W], pre-computed optical flow, im2-->im1
+    Returns: warped image and mask indicating valid positions
+    """
+    B, C, H, W = x.size()
+    # mesh grid
+    xx = torch.arange(0, W).view(1, -1).repeat(H, 1)
+    yy = torch.arange(0, H).view(-1, 1).repeat(1, W)
+    xx = xx.view(1, 1, H, W).repeat(B, 1, 1, 1)
+    yy = yy.view(1, 1, H, W).repeat(B, 1, 1, 1)
+    grid = torch.cat((xx, yy), 1).float()
+
+    if x.is_cuda:
+        grid = grid.cuda()
+    vgrid = Variable(grid) + flo
+
+    # scale grid to [-1,1]
+    vgrid[:, 0, :, :] = 2.0 * vgrid[:, 0, :, :].clone() / max(W - 1, 1) - 1.0
+    vgrid[:, 1, :, :] = 2.0 * vgrid[:, 1, :, :].clone() / max(H - 1, 1) - 1.0
+
+    vgrid = vgrid.permute(0, 2, 3, 1)
+    output = nn.functional.grid_sample(x, vgrid)
+    mask = torch.autograd.Variable(torch.ones(x.size())).cuda()
+    mask = nn.functional.grid_sample(mask, vgrid)
+
+    # if W==128:
+    # np.save('mask.npy', mask.cpu().data.numpy())
+    # np.save('warp.npy', output.cpu().data.numpy())
+
+    mask[mask < 0.9999] = 0
+    mask[mask > 0] = 1
+
+    return output * mask, mask
+
+
+###############################################################################################
+def model_fn_decorator(loss_fn, mode='train'):
+
+    # vgg features as region-level statistics
+    if mode == 'train':
+        vgg_loss = VGGPerceptualLoss().cuda()
+
+    def val_model_fn(args, data, model, net_metric, save_path):
+        model.eval()
+
+        # prepare input and forward
+        number = data['number']
+        in_img = data['in_img'][0].cuda()
+        label = data['label'][0].cuda()
+        # ref = data['ref'][0].cuda()
+        num_img_aux = len(data['in_img_aux'])
+        assert num_img_aux > 0
+        in_img_aux = data['in_img_aux'][0].cuda()
+        for i in range(1, num_img_aux):
+            in_img_aux = torch.cat([in_img_aux, data['in_img_aux'][i].cuda()], axis=1)
+
+        with torch.no_grad():
+            out3_, out2_, out_img_, _, _, _, save_dict = model(cur=in_img, ref=in_img_aux)
+            if args.use_color_correction:
+                out_img = match_colors_ds(label,ref.detach(),out_img_)
+                out2 = match_colors_ds(label[:,:,::2,::2],ref[:,:,::2,::2].detach(),out2_)
+                out3 = match_colors_ds(label[:,:,::4,::4],ref[:,:,::4,::4].detach(),out3_)
+            else:
+                out_img, out2, out3 = out_img_, out2_, out3_
+            loss = loss_fn(out3, out2, out_img, label, feature_layers=[2])
+
+        out_put = tensor2img(out_img)
+        gt = tensor2img(label)
+        pre = torch.clamp(out_img, min=0, max=1)
+        tar = torch.clamp(label, min=0, max=1)
+
+        # Calculate LPIPS
+        cur_lpips = net_metric.forward(pre, tar, normalize=True)
+        # Calculate PSNR
+        cur_psnr = calculate_psnr(out_put, gt)
+        # Calculate SSIM
+        cur_ssim = calculate_ssim(out_put, gt)
+
+        # save images
+        if args.SAVE_IMG != 0:
+            out_save = out_img.detach().cpu()
+            torchvision.utils.save_image(out_save, save_path + '/' + 'val_%05s' % number[0] + '.%s' % args.SAVE_IMG)
+
+        return loss, cur_psnr, cur_ssim, cur_lpips.item()
+
+
+    def test_model_fn(args, data, model, save_path):
+        model.eval()
+
+        # prepare input and forward
+        number = data['number']
+        in_img = data['in_img'][0].cuda()
+        # ref = data['ref'][0].cuda()
+        num_img_aux = len(data['in_img_aux'])
+        assert num_img_aux > 0
+        in_img_aux = data['in_img_aux'][0].cuda()
+        for i in range(1, num_img_aux):
+            in_img_aux = torch.cat([in_img_aux, data['in_img_aux'][i].cuda()], axis=1)
+
+        with torch.no_grad():
+            out3_, out2_, out_img_, _, _, _ = model(cur=in_img, ref=in_img_aux)
+            if args.use_color_correction:
+                out_img = match_colors_ds(label,out_img_.detach(),out_img_)
+            else:
+                out_img = out_img_
+
+        # save images
+        if args.SAVE_IMG != 0:
+            out_save = out_img.detach().cpu()
+            torchvision.utils.save_image(out_save, save_path + '/' + 'test_%05s' % number[0] + '.%s' % args.SAVE_IMG)
+
+
+    def train_model_fn(args, data, model, iters, epoch):
+        model.train()
+
+        # prepare input and forward
+        if args.use_temporal and (epoch >= args.temporal_begin_epoch):
+            # currently, only support 2 branches
+            in_img = data['in_img'][0].cuda()
+            label = data['label'][0].cuda()
+            # ref = data['ref'][0].cuda()
+            img_aux_list = data['in_img_aux'][0:args.NUM_AUX_FRAMES]
+            in_img_1 = data['in_img'][1].cuda()
+            label_1 = data['label'][1].cuda()
+            # ref_1 = data['ref'][1].cuda()
+            img_aux_list1 = data['in_img_aux'][args.NUM_AUX_FRAMES:2 * args.NUM_AUX_FRAMES]
+
+            in_img_aux = img_aux_list[0].cuda()
+            in_img_aux_1 = img_aux_list1[0].cuda()
+            for i in range(1, args.NUM_AUX_FRAMES):
+                in_img_aux = torch.cat([in_img_aux, img_aux_list[i].cuda()], axis=1)
+                in_img_aux_1 = torch.cat([in_img_aux_1, img_aux_list1[i].cuda()], axis=1)
+
+            out3_, out2_, out_img_, f_lv1, f_lv2, f_lv3 = model(cur=in_img, ref=in_img_aux)
+            out3_1_, out2_1_, out_img_1_, f_lv1_1, f_lv2_1, f_lv3_1 = model(cur=in_img_1, ref=in_img_aux_1)
+
+            # color map ==========================================================================================================================
+            if args.use_color_correction:
+                out_img = match_colors_ds(label,ref.detach(),out_img_)
+                out2 = match_colors_ds(label[:,:,::2,::2],ref[:,:,::2,::2].detach(),out2_)
+                out3 = match_colors_ds(label[:,:,::4,::4],ref[:,:,::4,::4].detach(),out3_)
+                out_img_1 = match_colors_ds(label_1,ref_1.detach(),out_img_1_)
+                out2_1 = match_colors_ds(label_1[:,:,::2,::2],ref_1[:,:,::2,::2].detach(),out2_1_)
+                out3_1 = match_colors_ds(label_1[:,:,::4,::4],ref_1[:,:,::4,::4].detach(),out3_1_)
+            else:
+                out_img, out2, out3, out_img_1, out2_1, out3_1 = out_img_, out2_, out3_, out_img_1_, out2_1_, out3_1_
+
+            # reconstruction loss
+            loss = loss_fn(out3, out2, out_img, label, feature_layers=[2]) + loss_fn(out3_1, out2_1, out_img_1, label_1, feature_layers=[2])
+            loss_reg = 0 * loss
+            loss_temporal = 0 * loss
+
+            # temporal consistency loss
+            ## basic relation-based loss
+            if args.temporal_loss_mode == 0:
+                # regress output_error to gt_error upon pixel-level
+                gt_error = label - label_1
+                out_error = out_img - out_img_1
+                loss_temporal = F.l1_loss(gt_error, out_error)
+
+            ## use multi-scale relation-based loss
+            elif args.temporal_loss_mode == 1:
+                # blur image/area statistics/intensity
+                # k_sizes = [1, 3, 5, 7]
+                k_sizes = args.k_sizes
+                gt_errors = []
+                out_errors = []
+
+                for i in range(len(k_sizes)):
+                    k_size = k_sizes[i]
+                    avg_blur = nn.AvgPool2d(k_size, stride=1, padding=int((k_size - 1) / 2))
+                    gt_error = avg_blur(label) - avg_blur(label_1)
+                    out_error = avg_blur(out_img) - avg_blur(out_img_1)
+                    gt_errors.append(gt_error)
+                    out_errors.append(out_error)
+
+                gt_error_rgb_pixel_min = gt_errors[0]
+                out_error_rgb_pixel_min = out_errors[0]
+
+                for j in range(1, len(k_sizes)):
+                    gt_error_rgb_pixel_min = torch.where(torch.abs(out_error_rgb_pixel_min) < torch.abs(out_errors[j]),
+                            gt_error_rgb_pixel_min, gt_errors[j])
+                    out_error_rgb_pixel_min = torch.where(torch.abs(out_error_rgb_pixel_min) < torch.abs(out_errors[j]),
+                            out_error_rgb_pixel_min, out_errors[j])
+
+                loss_temporal = F.l1_loss(gt_error_rgb_pixel_min, out_error_rgb_pixel_min)
+
+            ## Alternatively, combine relation-based loss at different scales with different weights
+            elif args.temporal_loss_mode == 2:
+                # blur image/area statistics/intensity
+                # k_sizes = [1, 3, 5, 7]
+                k_sizes = args.k_sizes
+                # k_weights = [0.25, 0.25, 0.25, 0.25]
+                k_weights = args.k_weights
+                loss_temporal = 0*loss
+
+                for i in range(len(k_sizes)):
+                    k_size = k_sizes[i]
+                    k_weight = k_weights[i]
+                    avg_blur = nn.AvgPool2d(k_size, stride=1, padding=int((k_size - 1) / 2))
+                    gt_error = avg_blur(label) - avg_blur(label_1)
+                    out_error = avg_blur(out_img) - avg_blur(out_img_1)
+                    loss_temporal = loss_temporal + F.l1_loss(gt_error, out_error) * k_weight
+
+            else:
+                loss_temporal = 0*loss
+
+            loss_temporal = args.weight_t * loss_temporal
+            loss = loss + loss_temporal
+
+        # do not use temporal constraints
+        else:
+            #print('data[in_img]',data['in_img'].shape)
+            in_img = data['in_img'][0].cuda()
+            label = data['label'][0].cuda()
+            # ref = data['ref'][0].cuda()
+            num_img_aux = len(data['in_img_aux'])
+            in_img_aux = data['in_img_aux'][0].cuda()
+            #print('in_img:',in_img.shape)
+            #print('label:',label.shape)
+            for i in range(1, args.NUM_AUX_FRAMES):
+                in_img_aux = torch.cat([in_img_aux, data['in_img_aux'][i].cuda()], axis=1)
+            #-----------compute flops and params------------
+            # input = torch.randn((1, 4, 128, 128)).cuda()
+            # input_ = torch.randn((1, 8, 128, 128)).cuda()  
+            # from thop import profile
+            # flops, params = profile(model, inputs=(input,input_,))
+            # print('FLOPs = ' + str(flops/1e12) + 'T')
+            # print('Params = ' + str(params/1e6) + 'M')
+            #------------------------------------------------
+            out3_, out2_, out_img_, f_lv1, f_lv2, f_lv3 = model(cur=in_img, ref=in_img_aux)
+            if args.use_color_correction:
+                out_img = match_colors_ds(label,ref.detach(),out_img_)
+                out2 = match_colors_ds(label[:,:,::2,::2],ref[:,:,::2,::2].detach(),out2_)
+                out3 = match_colors_ds(label[:,:,::4,::4],ref[:,:,::4,::4].detach(),out3_)
+            else:
+                out_img, out2, out3 = out_img_, out2_, out3_
+            loss = loss_fn(out3, out2, out_img, label, feature_layers=[2])
+
+            # # do not use deep supervision loss
+            # loss = loss_fn(out_img, label, feature_layers=[2])
+
+            loss_temporal = loss*0
+            loss_reg = loss*0
+
+        '''
+        # save images
+        if iters % args.SAVE_ITER == (args.SAVE_ITER - 1):
+            in_save = in_img.detach().cpu()[:, 0:3, :, :]
+            out_save = out_img.detach().cpu()
+            gt_save = label.detach().cpu()
+            res_save = torch.cat((in_save, out_save, gt_save), 2)
+            #save_number = (iters + 1) // args.SAVE_ITER
+            #torchvision.utils.save_image(res_save, args.VISUALS_DIR + '/visual_x%04d_' % args.SAVE_ITER + '%05d' % save_number + '.jpg')
+        '''
+
+        return loss, loss_temporal, loss_reg, in_img, out_img_, out_img, label
+
+    if mode == 'test':
+        fn = test_model_fn
+    elif mode == 'val':
+        fn = val_model_fn
+    else:
+        fn = train_model_fn
+    return fn
+
+
+'''
+if __name__ == '__main__':
+    # upscale = 4
+    # window_size = (2, 8, 8)
+    # height = (1024 // upscale // window_size[1] + 1) * window_size[1]
+    # width = (1024 // upscale // window_size[2] + 1) * window_size[2]
+    logger, net_metric = init()
+    model = VDM_PCD(args).cuda()
+
+    #print(model)
+    #print(height, width, model.flops() / 1e9)
+
+    input = torch.randn((1, 4, 192, 192)).cuda()
+    input_ = torch.randn((1, 8, 192, 192)).cuda()  
+    # x = model(x)
+    # print(x.shape)
+    
+    from thop import profile
+    flops, params = profile(model, inputs=(input,input_,))
+    print('FLOPs = ' + str(flops/1e12) + 'T')
+    print('Params = ' + str(params/1e6) + 'M')
+'''
+
+
+
+
+
+
+
+
+
+
+
+
+
+
