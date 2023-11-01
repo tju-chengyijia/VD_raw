@@ -64,6 +64,6 @@ All of the Dataset are copyright by [Intelligent Imaging and Reconstruction Labo
 ## Acknowledgement
 
 Our work and implementations are inspired by following projects:<br/>
-[EDVR] (https://github.com/xinntao/EDVR)<br/>
-[VideoDemoireing] (https://github.com/CVMI-Lab/VideoDemoireing)<br/>
+[EDVR](https://github.com/xinntao/EDVR)<br/>
+[VideoDemoireing](https://github.com/CVMI-Lab/VideoDemoireing)<br/>
 
