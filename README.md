@@ -11,7 +11,7 @@ This repository contains official implementation of our NeurIPS 2023 paper "Reca
 
 ## Demo Video
 
-https://github.com/tju-chengyijia/VD_raw/blob/main/demo/nips_2023.mp4 <br>
+[video](https://github.com/tju-chengyijia/VD_raw/blob/main/demo/nips_2023.mp4) <br>
 
 ## Dataset
 
@@ -33,19 +33,36 @@ All of the Dataset are copyright by [Intelligent Imaging and Reconstruction Labo
 
 ### Dependencies and Installation
 
-...
+- Ubuntu 20.04.5 LTS
+- Python 3.8.10
+- NVIDIA GPU + CUDA 11.7
+- Pytorch-GPU 1.10.0
 
 ### Prepare
 
-...
+- Download our dataset and place them in data folder according to the TRAIN_DATASET and TEST_DATASET in [config files](https://github.com/tju-chengyijia/VD_raw/tree/main/config).
+- Please note to set the paths for variables MODEL_DIR, fhd_pretrain, VISUALS_DIR, NETS_DIR, VAL_RESULT_DIR, TEST_RESULT_DIR, etc. in the config file appropriately.
+- Download pre-trained model. Our baseline model is placed in [this project](https://github.com/tju-chengyijia/VD_raw/blob/main/model_dir_cwb/nets/checkpoint_000040.tar). Please download our complete model in [LINK] and place it [here](https://github.com/tju-chengyijia/VD_raw/tree/main/model_dir_depth2/nets).
+- Install Basicsr-GPU. `python setup.py develop` For more information, please refer to [LINK](https://github.com/xinntao/EDVR).
 
 ### Test
 
-...
+- Test pretrained model on our testset.
+```
+python test.py --config=./config/vdm_depth.yaml
+```
 
 ### Train
 
-...
+- Stage 1: Train the baseline network.
+```
+python train.py --config=./config/vdm_baseline.yaml
+```
+
+- Stage 2: Train the complete network.
+```
+python train_depth.py --config=./config/vdm_depth.yaml
+```
 
 ## Results
 
@@ -64,6 +81,6 @@ All of the Dataset are copyright by [Intelligent Imaging and Reconstruction Labo
 ## Acknowledgement
 
 Our work and implementations are inspired by following projects:<br/>
-[EDVR] (https://github.com/xinntao/EDVR)<br/>
-[VideoDemoireing] (https://github.com/CVMI-Lab/VideoDemoireing)<br/>
+[EDVR](https://github.com/xinntao/EDVR)<br/>
+[VideoDemoireing](https://github.com/CVMI-Lab/VideoDemoireing)<br/>
 
