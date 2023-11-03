@@ -4,8 +4,8 @@ GENERAL:
 
 DATA:
   MODE: multi  # use multi-frames or single repetitive frames 'single'
-  TRAIN_DATASET: /data/cyj/video_dataset/merge/train/  # path of train frames
-  TEST_DATASET: /data/cyj/video_dataset/merge/test/    # path of test frames
+  TRAIN_DATASET: ./video_dataset/merge/train/  # path of train frames
+  TEST_DATASET: ./video_dataset/merge/test/    # path of test frames
   HEIGHT: 720   # height of the frame
   WIDTH: 1280   # width of the frame
   frames_each_video: 60  # number of frames each video
@@ -15,7 +15,7 @@ TRAIN:
   N_G: 128
   N_D: 64
   LOADER: crop   # crop image for training
-  MODEL_DIR: /data/cyj/VD_raw/model_dir_depth2
+  MODEL_DIR: ./VD_raw/model_dir_depth2
   EPOCHS: 100
   BASE_LR: 0.0002
   BATCH_SIZE: 14
@@ -24,10 +24,10 @@ TRAIN:
   RESIZE_W:
   SAVE_ITER: 5  # save intermediate results every xxx iterations
   LOAD_EPOCH: 32  # resume training. if 0, train from scratch
-  fhd_pretrain: /data/cyj/VD_raw/model_dir_cwb/nets/checkpoint_000040.tar
-  LOGS_DIR: /data/cyj/VD_raw/model_dir_depth2/logs
-  VISUALS_DIR: /data/cyj/VD_raw/model_dir_depth2/visuals
-  NETS_DIR: /data/cyj/VD_raw/model_dir_depth2/nets
+  fhd_pretrain: ./VD_raw/model_dir_cwb/nets/checkpoint_000040.tar
+  LOGS_DIR: ./VD_raw/model_dir_depth2/logs
+  VISUALS_DIR: ./VD_raw/model_dir_depth2/visuals
+  NETS_DIR: ./VD_raw/model_dir_depth2/nets
   DECAY_EPOCH: 20  # cosine learning rate, xx epochs/round
   DECAY_FACTOR: 0.5
   MIN_LR: 0.000001
@@ -56,10 +56,10 @@ TRAIN:
 #  k_weights: [0.25, 0.25, 0.25, 0.25]  # weights used to blend different scales
 
 TEST:
-  VAL_RESULT_DIR: /data/cyj/VD_raw/val_result  # folder to save validation results
+  VAL_RESULT_DIR: ./VD_raw/val_result  # folder to save validation results
   VAL_TIME: 1  # validate every xxx epochs
-  TEST_EPOCH: 40  # test epoch, 59 means 'checkpoint_000059.tar'
-  TEST_RESULT_DIR: /data/cyj/VD_raw/test_result_depth2  # folder to save test results
+  TEST_EPOCH: 35  # test epoch, 59 means 'checkpoint_000059.tar'
+  TEST_RESULT_DIR: ./VD_raw/test_result_depth2  # folder to save test results
   SAVE_IMG: 0  # image suffix for storage
   have_gt: True  # have GT during test? If true, calculate metrics
 
