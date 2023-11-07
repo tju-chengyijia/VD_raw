@@ -62,7 +62,7 @@ def train_epoch(args, TrainImgLoader, model, model_fn, optimizer, epoch, iters, 
     logger.add_scalar('Train/learning_rate', optimizer.state_dict()['param_groups'][0]['lr'], epoch)
 
     for batch_idx, data in enumerate(TrainImgLoader):
-        loss, loss_temporal, loss_reg, in_img, ref, out_img_, out_img, label = model_fn(args, data, model, iters, epoch)
+        loss, loss_temporal, loss_reg, in_img, out_img_, out_img, label = model_fn(args, data, model, iters, epoch)
         optimizer.zero_grad()
         loss.backward()
         
@@ -89,11 +89,11 @@ def train_epoch(args, TrainImgLoader, model, model_fn, optimizer, epoch, iters, 
             logger.add_scalar('Train/avg_temp_loss', avg_train_loss_temporal, (epoch-1)*num_batch+batch_idx)
             logger.add_scalar('Train/avg_reg_loss', avg_train_loss_reg, (epoch-1)*num_batch+batch_idx)
             in_save = in_img.detach().cpu()[0:1, [0,1,3], :, :]
-            ref_save = ref.detach().cpu()[0:1, :, ::2, ::2]
+            # ref_save = ref.detach().cpu()[0:1, :, ::2, ::2]
             out_save_ = out_img_.detach().cpu()[0:1, :, ::2, ::2]
             out_save = out_img.detach().cpu()[0:1, :, ::2, ::2]
             gt_save = label.detach().cpu()[0:1, :, ::2, ::2]
-            res_save = torch.cat((in_save, ref_save, out_save, gt_save), 3)
+            res_save = torch.cat((in_save, out_save, gt_save), 3)
             logger.add_images('res_save',res_save,(epoch-1)*num_batch+batch_idx)
         #print(desc)
         #tbar.set_description(desc)
