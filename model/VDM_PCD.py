@@ -205,7 +205,7 @@ def model_fn_decorator(loss_fn, mode='train'):
         number = data['number']
         in_img = data['in_img'][0].cuda()
         label = data['label'][0].cuda()
-        ref = data['ref'][0].cuda()
+        # ref = data['ref'][0].cuda()
         num_img_aux = len(data['in_img_aux'])
         assert num_img_aux > 0
         in_img_aux = data['in_img_aux'][0].cuda()
@@ -249,7 +249,7 @@ def model_fn_decorator(loss_fn, mode='train'):
         # prepare input and forward
         number = data['number']
         in_img = data['in_img'][0].cuda()
-        ref = data['ref'][0].cuda()
+        # ref = data['ref'][0].cuda()
         num_img_aux = len(data['in_img_aux'])
         assert num_img_aux > 0
         in_img_aux = data['in_img_aux'][0].cuda()
@@ -277,11 +277,11 @@ def model_fn_decorator(loss_fn, mode='train'):
             # currently, only support 2 branches
             in_img = data['in_img'][0].cuda()
             label = data['label'][0].cuda()
-            ref = data['ref'][0].cuda()
+            # ref = data['ref'][0].cuda()
             img_aux_list = data['in_img_aux'][0:args.NUM_AUX_FRAMES]
             in_img_1 = data['in_img'][1].cuda()
             label_1 = data['label'][1].cuda()
-            ref_1 = data['ref'][1].cuda()
+            # ref_1 = data['ref'][1].cuda()
             img_aux_list1 = data['in_img_aux'][args.NUM_AUX_FRAMES:2 * args.NUM_AUX_FRAMES]
 
             in_img_aux = img_aux_list[0].cuda()
@@ -373,7 +373,7 @@ def model_fn_decorator(loss_fn, mode='train'):
             #print('data[in_img]',data['in_img'].shape)
             in_img = data['in_img'][0].cuda()
             label = data['label'][0].cuda()
-            ref = data['ref'][0].cuda()
+            # ref = data['ref'][0].cuda()
             num_img_aux = len(data['in_img_aux'])
             in_img_aux = data['in_img_aux'][0].cuda()
 
@@ -413,7 +413,7 @@ def model_fn_decorator(loss_fn, mode='train'):
             #torchvision.utils.save_image(res_save, args.VISUALS_DIR + '/visual_x%04d_' % args.SAVE_ITER + '%05d' % save_number + '.jpg')
         '''
 
-        return loss, loss_temporal, loss_reg, in_img, ref, out_img_, out_img, label
+        return loss, loss_temporal, loss_reg, in_img, out_img_, out_img, label
 
     if mode == 'test':
         fn = test_model_fn
