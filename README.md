@@ -76,7 +76,16 @@ python train_depth.py --config=./config/vdm_depth.yaml
 
 ## Citation
 
-...
+If you find our dataset or code helpful in your research or work, please cite our paper:
+
+```
+@article{yue2023recaptured,
+  title={Recaptured Raw Screen Image and Video Demoir$\backslash$'eing via Channel and Spatial Modulations},
+  author={Yue, Huanjing and Cheng, Yijia and Liu, Xin and Yang, Jingyu},
+  journal={arXiv preprint arXiv:2310.20332},
+  year={2023}
+}
+```
 
 ## Acknowledgement
 
