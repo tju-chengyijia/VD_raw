@@ -19,7 +19,7 @@ This repository contains official implementation of our NeurIPS 2023 paper "Reca
   <img width="1000" src="https://github.com/tju-chengyijia/VD_raw/blob/main/imgs/dataset_show.png">
 </p>
 
-You can download our dataset from ......
+You can download our dataset from [Baidu Netdisk](https://pan.baidu.com/s/1SN-ZtOzHpYQYIxibsxnZEw) (Verification code: 2xrh)
 
 We provide ground truth frames and moiré frames in raw domain and sRGB domain respectively, which are placed in four folders gt_raw, gt_rgb, moire_raw and moire_rgb. The ground truth raw image is actually pseudo ground truth. The users can regenerate them by utilizing other RGB to raw inversing algorithms. Our raw domain data is stored in npz format, including raw data, black level value, white level value and white balance value.
 
