@@ -42,7 +42,7 @@ All of the Dataset are copyright by [Intelligent Imaging and Reconstruction Labo
 
 - Download our dataset and place them in data folder according to the TRAIN_DATASET and TEST_DATASET in [config files](https://github.com/tju-chengyijia/VD_raw/tree/main/config).
 - Please note to set the paths for variables MODEL_DIR, fhd_pretrain, VISUALS_DIR, NETS_DIR, VAL_RESULT_DIR, TEST_RESULT_DIR, etc. in the config file appropriately.
-- Download pre-trained model. Our baseline model is placed in [this project](https://github.com/tju-chengyijia/VD_raw/blob/main/model_dir_cwb/nets/checkpoint_000040.tar). Please download our complete model in [LINK] and place it [here](https://github.com/tju-chengyijia/VD_raw/tree/main/model_dir_depth2/nets).
+- Download pre-trained model. Our baseline model is placed in [this project](https://github.com/tju-chengyijia/VD_raw/blob/main/model_dir_cwb/nets/checkpoint_000040.tar). Please download our complete model in  [Baidu Netdisk](https://pan.baidu.com/s/1ThF7LZ20RkjBUbb-w3Hwqw) (Verification code: f5g4) and place it [here](https://github.com/tju-chengyijia/VD_raw/tree/main/model_dir_depth2/nets).
 - Install Basicsr-GPU. `python setup.py develop` For more information, please refer to [LINK](https://github.com/xinntao/EDVR).
 
 ### Test
